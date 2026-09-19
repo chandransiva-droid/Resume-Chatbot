@@ -6,9 +6,11 @@ from pathlib import Path
 import numpy as np
 import streamlit as st
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AuthenticationError, OpenAI
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
+if not os.getenv("OPENAI_API_KEY", "").strip():
+    os.environ.pop("OPENAI_API_KEY", None)
 
 ABOUT_ME_PATH = Path(__file__).parent / "about_me.txt"
 NAME = "Chandran Siva"
@@ -144,16 +146,40 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-def get_openai_api_key() -> str | None:
-    try:
-        secret_key = st.secrets.get("OPENAI_API_KEY")
-        if secret_key:
-            return str(secret_key).strip()
-    except Exception:
-        pass
+def clean_api_key(value: object) -> str | None:
+    if value is None:
+        return None
+    key = str(value).strip().strip('"').strip("'").strip()
+    return key or None
 
-    env_key = os.getenv("OPENAI_API_KEY")
-    return env_key.strip() if env_key else None
+
+def secret_lookup(*path: str) -> str | None:
+    try:
+        value: object = st.secrets
+        for key in path:
+            value = value[key]
+        return clean_api_key(value)
+    except Exception:
+        return None
+
+
+def get_openai_api_key() -> str | None:
+    return (
+        secret_lookup("OPENAI_API_KEY")
+        or secret_lookup("openai", "api_key")
+        or secret_lookup("openai", "OPENAI_API_KEY")
+        or clean_api_key(os.getenv("OPENAI_API_KEY"))
+    )
+
+
+def show_missing_api_key_error() -> None:
+    st.error(
+        "**OpenAI API key is missing or invalid.** On Streamlit Cloud, open "
+        "**Manage app → Settings → Secrets** and add:\n\n"
+        '```toml\nOPENAI_API_KEY = "sk-your-real-key"\n```\n\n'
+        "Locally, put the same key in `.streamlit/secrets.toml` or `.env`, "
+        "then reboot the app."
+    )
 
 
 OPENAI_API_KEY = get_openai_api_key()
@@ -161,11 +187,7 @@ missing_api_key = not OPENAI_API_KEY
 missing_about_me = not ABOUT_ME_PATH.is_file()
 
 if missing_api_key:
-    st.error(
-        "**OpenAI API key is missing.** Add `OPENAI_API_KEY` to "
-        "`.streamlit/secrets.toml` (preferred) or to a `.env` file as a fallback, "
-        "then restart the app."
-    )
+    show_missing_api_key_error()
 if missing_about_me:
     st.error(
         "**`about_me.txt` was not found.** Put the file next to `rag_chatbot.py` "
@@ -285,7 +307,11 @@ def initialize_knowledge_base() -> None:
             st.error("about_me.txt is empty, so no knowledge base could be built.")
             st.stop()
 
-        embeddings = embed_texts(chunks)
+        try:
+            embeddings = embed_texts(chunks)
+        except AuthenticationError:
+            show_missing_api_key_error()
+            st.stop()
 
     st.session_state.chunks = chunks
     st.session_state.embeddings = embeddings
@@ -322,8 +348,12 @@ if prompt:
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            retrieved_chunks = top_k_chunks(prompt)
-            reply = answer_from_context(prompt, retrieved_chunks)
+            try:
+                retrieved_chunks = top_k_chunks(prompt)
+                reply = answer_from_context(prompt, retrieved_chunks)
+            except AuthenticationError:
+                show_missing_api_key_error()
+                st.stop()
         st.markdown(reply)
         render_sources(retrieved_chunks)
 
