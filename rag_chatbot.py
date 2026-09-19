@@ -8,9 +8,8 @@ import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ABOUT_ME_PATH = Path(__file__).parent / "about_me.txt"
 NAME = "Chandran Siva"
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -145,13 +144,27 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+def get_openai_api_key() -> str | None:
+    try:
+        secret_key = st.secrets.get("OPENAI_API_KEY")
+        if secret_key:
+            return str(secret_key).strip()
+    except Exception:
+        pass
+
+    env_key = os.getenv("OPENAI_API_KEY")
+    return env_key.strip() if env_key else None
+
+
+OPENAI_API_KEY = get_openai_api_key()
 missing_api_key = not OPENAI_API_KEY
 missing_about_me = not ABOUT_ME_PATH.is_file()
 
 if missing_api_key:
     st.error(
-        "**OpenAI API key is missing.** Add `OPENAI_API_KEY` to a `.env` file "
-        "in this project folder, then restart the app."
+        "**OpenAI API key is missing.** Add `OPENAI_API_KEY` to "
+        "`.streamlit/secrets.toml` (preferred) or to a `.env` file as a fallback, "
+        "then restart the app."
     )
 if missing_about_me:
     st.error(
